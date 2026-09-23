@@ -262,6 +262,8 @@ enum ItemType: Decodable {
     case timeButton(formatTemplate: String, timeZone: String?, locale: String?)
     case battery
     case cpu(refreshInterval: Double)
+    case codexToday(refreshInterval: Double)
+    case codexQuota(refreshInterval: Double)
     case dock(autoResize: Bool, filter: String?)
     case volume
     case brightness(refreshInterval: Double)
@@ -319,6 +321,8 @@ enum ItemType: Decodable {
         case timeButton
         case battery
         case cpu
+        case codexToday
+        case codexQuota
         case dock
         case volume
         case brightness
@@ -368,6 +372,14 @@ enum ItemType: Decodable {
         case .cpu:
             let refreshInterval = try container.decodeIfPresent(Double.self, forKey: .refreshInterval) ?? 5.0
             self = .cpu(refreshInterval: refreshInterval)
+
+        case .codexToday:
+            let refreshInterval = try container.decodeIfPresent(Double.self, forKey: .refreshInterval) ?? 30.0
+            self = .codexToday(refreshInterval: refreshInterval)
+
+        case .codexQuota:
+            let refreshInterval = try container.decodeIfPresent(Double.self, forKey: .refreshInterval) ?? 30.0
+            self = .codexQuota(refreshInterval: refreshInterval)
 
         case .dock:
             let autoResize = try container.decodeIfPresent(Bool.self, forKey: .autoResize) ?? false
@@ -471,6 +483,7 @@ struct Action: Decodable {
         case none
         case hidKey(keycode: Int32)
         case keyPress(keycode: Int)
+        case keyCombo(keycode: Int, modifiers: [String])
         case appleScript(source: SourceProtocol)
         case shellScript(executable: String, parameters: [String])
         case custom(closure: () -> Void)
@@ -480,6 +493,7 @@ struct Action: Decodable {
     private enum ActionTypeRaw: String, Decodable {
         case hidKey
         case keyPress
+        case keyCombo
         case appleScript
         case shellScript
         case openUrl
@@ -489,6 +503,7 @@ struct Action: Decodable {
         case trigger
         case action
         case keycode
+        case modifiers
         case actionAppleScript
         case executablePath
         case shellArguments
@@ -512,6 +527,11 @@ struct Action: Decodable {
         case .some(.keyPress):
             let keycode = try container.decode(Int.self, forKey: .keycode)
             value = .keyPress(keycode: keycode)
+
+        case .some(.keyCombo):
+            let keycode = try container.decode(Int.self, forKey: .keycode)
+            let modifiers = try container.decodeIfPresent([String].self, forKey: .modifiers) ?? []
+            value = .keyCombo(keycode: keycode, modifiers: modifiers)
 
         case .some(.appleScript):
             let source = try container.decode(Source.self, forKey: .actionAppleScript)
@@ -540,6 +560,7 @@ enum LegacyActionType: Decodable {
     case none
     case hidKey(keycode: Int32)
     case keyPress(keycode: Int)
+    case keyCombo(keycode: Int, modifiers: [String])
     case appleScript(source: SourceProtocol)
     case shellScript(executable: String, parameters: [String])
     case custom(closure: () -> Void)
@@ -548,6 +569,7 @@ enum LegacyActionType: Decodable {
     private enum CodingKeys: String, CodingKey {
         case action
         case keycode
+        case modifiers
         case actionAppleScript
         case executablePath
         case shellArguments
@@ -557,6 +579,7 @@ enum LegacyActionType: Decodable {
     private enum ActionTypeRaw: String, Decodable {
         case hidKey
         case keyPress
+        case keyCombo
         case appleScript
         case shellScript
         case openUrl
@@ -574,6 +597,11 @@ enum LegacyActionType: Decodable {
         case .some(.keyPress):
             let keycode = try container.decode(Int.self, forKey: .keycode)
             self = .keyPress(keycode: keycode)
+
+        case .some(.keyCombo):
+            let keycode = try container.decode(Int.self, forKey: .keycode)
+            let modifiers = try container.decodeIfPresent([String].self, forKey: .modifiers) ?? []
+            self = .keyCombo(keycode: keycode, modifiers: modifiers)
 
         case .some(.appleScript):
             let source = try container.decode(Source.self, forKey: .actionAppleScript)
@@ -721,11 +749,13 @@ struct Source: Decodable, SourceProtocol {
     let filePath: String?
     let base64: String?
     let inline: String?
+    let systemName: String?
 
     private enum CodingKeys: String, CodingKey {
         case filePath
         case base64
         case inline
+        case systemName
     }
 
     var data: Data? {
@@ -737,6 +767,12 @@ struct Source: Decodable, SourceProtocol {
     }
 
     var image: NSImage? {
+        if #available(macOS 11.0, *),
+           let systemName = systemName,
+           let image = NSImage(systemSymbolName: systemName, accessibilityDescription: nil) {
+            image.isTemplate = true
+            return image.withSymbolConfiguration(.init(pointSize: 15, weight: .regular)) ?? image
+        }
         return data?.image
     }
 
@@ -744,14 +780,15 @@ struct Source: Decodable, SourceProtocol {
         return filePath?.fileURL.appleScript ?? string?.appleScript
     }
 
-    private init(filePath: String?, base64: String?, inline: String?) {
+    private init(filePath: String?, base64: String?, inline: String?, systemName: String?) {
         self.filePath = filePath
         self.base64 = base64
         self.inline = inline
+        self.systemName = systemName
     }
 
     init(filePath: String) {
-        self.init(filePath: filePath, base64: nil, inline: nil)
+        self.init(filePath: filePath, base64: nil, inline: nil, systemName: nil)
     }
 }
 

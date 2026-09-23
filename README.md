@@ -1,4 +1,4 @@
-# My touchbar. My rules. [![GitHub release](https://img.shields.io/github/release/toxblh/MTMR.svg)](https://github.com/Toxblh/MTMR/releases) [![license](https://img.shields.io/github/license/Toxblh/MTMR.svg)](https://github.com/Toxblh/MTMR/blob/master/LICENSE) ![minimal system requirements](https://img.shields.io/badge/required-macOS%2010.12.2-blue.svg) ![travis](https://travis-ci.org/Toxblh/MTMR.svg?branch=master)
+# My touchbar. My rules. [![GitHub release](https://img.shields.io/github/release/toxblh/MTMR.svg)](https://github.com/Toxblh/MTMR/releases) [![license](https://img.shields.io/github/license/Toxblh/MTMR.svg)](https://github.com/Toxblh/MTMR/blob/master/LICENSE) ![minimal system requirements](https://img.shields.io/badge/required-macOS%2011.0-blue.svg) ![travis](https://travis-ci.org/Toxblh/MTMR.svg?branch=master)
 
 <img src="Resources/logo.png" align="right"
      title="MTMR by Toxblh" width="110" height="110">
@@ -89,6 +89,8 @@ The pre-installed configuration contains less or more than you'll probably want,
 - pomodoro
 - network
 - upnext (Calendar events)
+- codexToday (today's Codex token usage and estimated API-equivalent cost)
+- codexQuota (Codex allowance remaining and next reset)
 
 > Media Keys
 
@@ -106,6 +108,30 @@ The pre-installed configuration contains less or more than you'll probably want,
 - staticButton
 - appleScriptTitledButton
 - shellScriptTitledButton
+
+### Codex preset
+
+`Resources/CodexPreset.json` provides a native-looking Touch Bar for the Codex
+desktop app. It is scoped with `matchAppId`, so MTMR is dismissed and the
+system Touch Bar returns when another app becomes active.
+
+The preset includes SF Symbol buttons and key combinations, an animated and
+interactive Clawd usage widget, and a color-coded Codex allowance meter. The
+usage widget prefers TokenTracker's read-only localhost API when TokenTracker
+is running, then falls back to local `~/.codex/sessions` logs. The allowance
+widget queries the locally authenticated `codex app-server` and falls back to
+the most recent local session snapshot. No usage data is sent by MTMR.
+
+To install it:
+
+```sh
+cp Resources/CodexPreset.json ~/Library/Application\ Support/MTMR/items.json
+```
+
+The shortcut buttons require Accessibility permission. `systemName` may be
+used in any image source to render an SF Symbol, and `keyCombo` accepts a
+virtual `keycode` plus any of `command`, `option`, `control`, and `shift` in
+its `modifiers` array.
 
 ## Gestures
 

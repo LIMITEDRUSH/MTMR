@@ -89,7 +89,7 @@ The pre-installed configuration contains less or more than you'll probably want,
 - pomodoro
 - network
 - upnext (Calendar events)
-- codexToday (today's Codex token usage and estimated API-equivalent cost)
+- codexToday (TokenTracker-style usage carousel and interactive Clawd companion)
 - codexQuota (Codex allowance remaining and next reset)
 
 > Media Keys
@@ -117,7 +117,10 @@ system Touch Bar returns when another app becomes active.
 
 The preset includes SF Symbol buttons and key combinations, an animated and
 interactive Clawd usage widget, and a color-coded Codex allowance meter. The
-usage widget prefers TokenTracker's read-only localhost API when TokenTracker
+usage widget mirrors TokenTracker's top companion: tapping its speech bubble
+cycles through today, 7-day and 30-day totals, active days, conversations,
+quota status, and personality messages while Clawd cycles through eleven
+reactions. It prefers TokenTracker's read-only localhost API when TokenTracker
 is running, then falls back to local `~/.codex/sessions` logs. The allowance
 widget performs the required two-stage handshake with the locally authenticated
 `codex app-server` every 10 seconds. If live quota data is unavailable it shows

@@ -333,7 +333,7 @@ final class CodexTodayBarItem: NSCustomTouchBarItem {
     private let refreshInterval: TimeInterval
     private let refreshQueue = DispatchQueue(label: "mtmr.codex-today", qos: .utility)
     private var timer: DispatchSourceTimer?
-    private let todayView = CodexTodayView(frame: NSRect(x: 0, y: 0, width: 252, height: 30))
+    private let todayView = CodexTodayView(frame: NSRect(x: 0, y: 0, width: 320, height: 30))
 
     init(identifier: NSTouchBarItem.Identifier, refreshInterval: TimeInterval) {
         self.refreshInterval = max(10, refreshInterval)
@@ -372,7 +372,7 @@ final class CodexTodayBarItem: NSCustomTouchBarItem {
 
 private final class CodexTodayView: NSView {
     private let petView = CodexPetView()
-    private let messageLabel = NSTextField(labelWithString: "Today · loading usage…")
+    private let messageLabel = NSTextField(labelWithString: "⏳ Crunching numbers…")
     private let pillView = NSView()
     private let tailView = CodexSpeechTailView()
     private let switchButton = NSButton()
@@ -387,13 +387,13 @@ private final class CodexTodayView: NSView {
 
         pillView.translatesAutoresizingMaskIntoConstraints = false
         pillView.wantsLayer = true
-        pillView.layer?.cornerRadius = 12
-        pillView.layer?.backgroundColor = NSColor(white: 1, alpha: 0.15).cgColor
+        pillView.layer?.cornerRadius = 13
+        pillView.layer?.backgroundColor = NSColor(white: 1, alpha: 0.16).cgColor
 
         tailView.translatesAutoresizingMaskIntoConstraints = false
 
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
-        messageLabel.alignment = .center
+        messageLabel.alignment = .left
         messageLabel.textColor = NSColor(white: 1, alpha: 0.92)
         messageLabel.font = NSFont.systemFont(ofSize: 11.5, weight: .medium)
         messageLabel.lineBreakMode = .byTruncatingMiddle
@@ -418,18 +418,18 @@ private final class CodexTodayView: NSView {
             heightAnchor.constraint(equalToConstant: 30),
             petView.leadingAnchor.constraint(equalTo: leadingAnchor),
             petView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            petView.widthAnchor.constraint(equalToConstant: 30),
-            petView.heightAnchor.constraint(equalToConstant: 28),
+            petView.widthAnchor.constraint(equalToConstant: 34),
+            petView.heightAnchor.constraint(equalToConstant: 30),
             tailView.widthAnchor.constraint(equalToConstant: 8),
             tailView.heightAnchor.constraint(equalToConstant: 12),
-            tailView.leadingAnchor.constraint(equalTo: petView.trailingAnchor, constant: 7),
+            tailView.leadingAnchor.constraint(equalTo: petView.trailingAnchor, constant: 6),
             tailView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            pillView.leadingAnchor.constraint(equalTo: petView.trailingAnchor, constant: 12),
+            pillView.leadingAnchor.constraint(equalTo: petView.trailingAnchor, constant: 11),
             pillView.trailingAnchor.constraint(equalTo: trailingAnchor),
             pillView.centerYAnchor.constraint(equalTo: centerYAnchor),
             pillView.heightAnchor.constraint(equalToConstant: 26),
-            messageLabel.leadingAnchor.constraint(equalTo: pillView.leadingAnchor, constant: 10),
-            messageLabel.trailingAnchor.constraint(equalTo: pillView.trailingAnchor, constant: -10),
+            messageLabel.leadingAnchor.constraint(equalTo: pillView.leadingAnchor, constant: 12),
+            messageLabel.trailingAnchor.constraint(equalTo: pillView.trailingAnchor, constant: -12),
             messageLabel.centerYAnchor.constraint(equalTo: pillView.centerYAnchor),
             switchButton.leadingAnchor.constraint(equalTo: pillView.leadingAnchor),
             switchButton.trailingAnchor.constraint(equalTo: pillView.trailingAnchor),
@@ -445,28 +445,83 @@ private final class CodexTodayView: NSView {
     func setSnapshots(today: CodexTodaySnapshot?, quota: CodexQuotaSnapshot?) {
         todaySnapshot = today
         quotaSnapshot = quota
+        pageIndex = min(pageIndex, max(0, messagePool.count - 1))
         renderCurrentPage(animatePet: !hasPresentedFirstSnapshot)
         hasPresentedFirstSnapshot = true
     }
 
     @objc private func cycleMessage(_: NSButton) {
-        pageIndex = (pageIndex + 1) % 2
+        let count = max(1, messagePool.count)
+        pageIndex = (pageIndex + 1) % count
         renderCurrentPage(animatePet: true)
     }
 
     private func renderCurrentPage(animatePet: Bool) {
-        if pageIndex == 0 {
-            if let snapshot = todaySnapshot {
-                messageLabel.stringValue = "Today · \(formatTokens(snapshot.totalTokens)) tokens · $\(String(format: "%.2f", snapshot.estimatedCost))"
-            } else {
-                messageLabel.stringValue = "Today · usage unavailable"
-            }
-            if animatePet { petView.showMood(.usage) }
-        } else {
-            messageLabel.stringValue = quotaMessage()
-            let isLow = (quotaSnapshot?.remainingPercent ?? 100) <= 30
-            if animatePet { petView.showMood(isLow ? .quotaLow : .quotaComfortable) }
+        let messages = messagePool
+        guard !messages.isEmpty else { return }
+        pageIndex %= messages.count
+        messageLabel.stringValue = messages[pageIndex]
+        if animatePet { petView.showCarouselAction(at: pageIndex) }
+    }
+
+    /// Mirrors TokenTracker's dashboard quip pool: live totals, rolling windows,
+    /// conversation activity, quota state, usage-sensitive reactions, and a
+    /// small set of personality lines. Tapping the bubble walks the whole pool.
+    private var messagePool: [String] {
+        guard let snapshot = todaySnapshot else {
+            return ["⏳ Crunching numbers…", "📡 Fetching latest data!", "🧮 Counting your tokens~"]
         }
+
+        let tokens = formatTokens(snapshot.totalTokens)
+        let cost = "$" + String(format: "%.2f", snapshot.estimatedCost)
+        var messages = [
+            "👋 Hey there~",
+            "📊 Today: \(tokens) tokens",
+            "📈 \(tokens) tokens — \(cost) spent today",
+            "🧾 Today's bill: \(cost) for \(tokens) tokens",
+            "💳 AI tab today: \(cost)"
+        ]
+
+        if snapshot.totalTokens < 50_000 {
+            messages += ["☕ Just warming up!", "🌱 A gentle start"]
+        } else if snapshot.totalTokens < 200_000 {
+            messages += ["🎯 Getting into the flow!", "💪 Solid progress today"]
+        } else if snapshot.totalTokens < 500_000 {
+            messages += ["🔥 Busy day!", "⚡ You're on a roll!"]
+        } else if snapshot.totalTokens < 2_000_000 {
+            messages += ["🚀 Heavy usage today!", "🖨 Token machine goes brrr"]
+        } else {
+            messages += ["🤯 MASSIVE day!", "🔥 Token counter on fire!"]
+        }
+
+        if let sevenDayTokens = snapshot.sevenDayTokens, sevenDayTokens > 0 {
+            messages.append("📅 7-day total: \(formatTokens(sevenDayTokens)) tokens")
+            if let activeDays = snapshot.sevenDayActiveDays, activeDays > 0 {
+                messages.append("🗓 \(activeDays) active days this week")
+                if activeDays >= 7 { messages.append("🏆 7/7 active days — perfect streak!") }
+            }
+        }
+        if let thirtyDayTokens = snapshot.thirtyDayTokens, thirtyDayTokens > 0 {
+            messages.append("📆 30-day total: \(formatTokens(thirtyDayTokens)) tokens")
+        }
+        if let average = snapshot.thirtyDayAverage, average > 0 {
+            messages.append("📊 Averaging ~\(formatTokens(average))/day this month")
+        }
+        if snapshot.conversationCount > 0 {
+            messages.append("💬 \(snapshot.conversationCount) conversations today")
+            if snapshot.conversationCount >= 10 {
+                messages.append("🗣 \(snapshot.conversationCount) chats! Busy talker today")
+            }
+        }
+
+        messages.append(quotaMessage())
+        messages += [
+            "👆 Tap me for more!",
+            "📋 I count so you don't have to",
+            "✨ Every token tells a story",
+            "🤝 Your AI spending buddy"
+        ]
+        return messages
     }
 
     private func quotaMessage() -> String {
@@ -492,6 +547,9 @@ private final class CodexTodayView: NSView {
     }
 
     private func formatTokens(_ tokens: Int64) -> String {
+        if tokens >= 1_000_000_000 {
+            return String(format: "%.1fB", Double(tokens) / 1_000_000_000)
+        }
         if tokens >= 1_000_000 {
             return String(format: "%.1fM", Double(tokens) / 1_000_000)
         }
@@ -547,14 +605,21 @@ private final class CodexPetView: NSView {
     private var displayMood: CodexPetMood = .quotaComfortable
     private var actionStarted: CFTimeInterval = 0
     private var actionDuration: TimeInterval = 0
+    private var tapAnimationIndex = 0
 
     private enum PetAction {
         case idle
-        case side(CGFloat)
-        case panic
         case happy
-        case yawn
-        case peek
+        case wizard
+        case juggling
+        case thinking
+        case ultrathink
+        case typing
+        case disconnected
+        case look
+        case doze
+        case sleeping
+        case error
     }
 
     override init(frame frameRect: NSRect) {
@@ -711,12 +776,13 @@ private final class CodexPetView: NSView {
         interactionView.addGestureRecognizer(press)
     }
 
-    @objc private func singleTapped(_ sender: NSClickGestureRecognizer) {
+    @objc private func singleTapped(_: NSClickGestureRecognizer) {
         guard CACurrentMediaTime() >= ignoreSingleTapUntil else { return }
-        let direction: CGFloat = sender.location(in: interactionView).x < interactionView.bounds.midX ? -1 : 1
         pendingSingleTap?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
-            self?.setAction(.side(direction), duration: 2.5)
+            guard let self = self else { return }
+            self.showCarouselAction(at: self.tapAnimationIndex)
+            self.tapAnimationIndex += 1
         }
         pendingSingleTap = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
@@ -725,7 +791,7 @@ private final class CodexPetView: NSView {
     @objc private func doubleTapped(_: NSClickGestureRecognizer) {
         ignoreSingleTapUntil = CACurrentMediaTime() + 0.4
         pendingSingleTap?.cancel()
-        setAction(.panic, duration: 3.5)
+        setAction(.ultrathink, duration: 3.5)
     }
 
     @objc private func longPressed(_ sender: NSPressGestureRecognizer) {
@@ -737,11 +803,28 @@ private final class CodexPetView: NSView {
 
     private func performAutomaticAction() {
         guard actionDuration == 0 else { return }
-        switch Int.random(in: 0 ... 2) {
-        case 0: setAction(.yawn, duration: 3.8)
-        case 1: setAction(.peek, duration: 3.2)
-        default: setAction(.side(Bool.random() ? -1 : 1), duration: 2.5)
+        switch Int.random(in: 0 ... 5) {
+        case 0: setAction(.doze, duration: 3.8)
+        case 1: setAction(.look, duration: 3.2)
+        case 2: setAction(.thinking, duration: 3.0)
+        case 3: setAction(.typing, duration: 2.8)
+        case 4: setAction(.juggling, duration: 3.0)
+        default: setAction(.happy, duration: 2.5)
         }
+    }
+
+    /// TokenTracker cycles these eleven Clawd scenes on every pet or bubble tap.
+    /// The compact Touch Bar drawing keeps the same emotional beats while using
+    /// Core Animation instead of SwiftUI Canvas.
+    func showCarouselAction(at index: Int) {
+        let actions: [(PetAction, TimeInterval)] = [
+            (.happy, 2.5), (.wizard, 2.8), (.juggling, 2.8),
+            (.thinking, 2.8), (.ultrathink, 3.2), (.typing, 2.6),
+            (.disconnected, 2.8), (.look, 2.5), (.doze, 3.2),
+            (.sleeping, 3.6), (.error, 3.0)
+        ]
+        let selection = actions[index % actions.count]
+        setAction(selection.0, duration: selection.1)
     }
 
     func showMood(_ mood: CodexPetMood) {
@@ -750,9 +833,9 @@ private final class CodexPetView: NSView {
         case .usage:
             setAction(.happy, duration: 2.8)
         case .quotaComfortable:
-            setAction(.peek, duration: 2.6)
+            setAction(.look, duration: 2.6)
         case .quotaLow:
-            setAction(.panic, duration: 3.4)
+            setAction(.error, duration: 3.4)
         }
     }
 
@@ -782,7 +865,7 @@ private final class CodexPetView: NSView {
             translationX: 0,
             y: sin(breathePhase * .pi * 2) * 0.9
         )
-        var eyeTransform = CGAffineTransform.identity
+        let eyeTransform = CGAffineTransform.identity
         var leftArmAngle: CGFloat = 0
         var rightArmAngle: CGFloat = 0
         var leftArmOffset = CGPoint.zero
@@ -819,7 +902,8 @@ private final class CodexPetView: NSView {
                 rightArmOffset = CGPoint(x: 0.8, y: -1.2)
                 exclamationOpacity = 1
             }
-        case let .side(direction):
+        case .look:
+            let direction: CGFloat = progress < 0.5 ? -1 : 1
             let envelope = sin(min(max(progress, 0), 1) * .pi)
             motionTransform = CGAffineTransform(translationX: direction * 2.1 * envelope, y: 0)
             questionOpacity = progress > 0.10 && progress < 0.70 ? 1 : 0
@@ -831,7 +915,7 @@ private final class CodexPetView: NSView {
                 rightArmAngle = wave
                 rightArmOffset = CGPoint(x: 0.8, y: -1.3 * envelope)
             }
-        case .panic:
+        case .ultrathink:
             let fade = max(0, 1 - progress)
             motionTransform = CGAffineTransform(translationX: sin(progress * .pi * 14) * 1.7 * fade, y: 0)
             questionOpacity = progress > 0.05 && progress < 0.42 ? 1 : 0
@@ -844,18 +928,49 @@ private final class CodexPetView: NSView {
             rightArmOffset = CGPoint(x: 1, y: -2 * lift)
             exclamationOpacity = progress > 0.05 && progress < 0.82 ? 1 : 0
             eyeOpacity = progress > 0.28 && progress < 0.40 ? 0.05 : 1
-        case .yawn:
+        case .doze, .sleeping:
             let yawnVisible = progress > 0.20 && progress < 0.78
             mouthOpacity = yawnVisible ? 1 : 0
-            tearOpacity = progress > 0.35 && progress < 0.72 ? 1 : 0
-            let squash = 1 - (yawnVisible ? 0.10 : 0)
+            tearOpacity = actionDuration < 3.5 && progress > 0.35 && progress < 0.72 ? 1 : 0
+            let squash = 1 - (yawnVisible ? (actionDuration >= 3.5 ? 0.22 : 0.10) : 0)
             motionTransform = CGAffineTransform(scaleX: 1, y: squash)
             eyeOpacity = yawnVisible ? 0.05 : eyeOpacity
-        case .peek:
+            questionOpacity = actionDuration >= 3.5 && progress > 0.35 && progress < 0.8 ? 0.65 : 0
+        case .thinking:
             let envelope = sin(progress * .pi)
             motionTransform = CGAffineTransform(rotationAngle: -0.18 * envelope)
             leftArmAngle = sin(progress * .pi * 6) * 0.30 * envelope
             leftArmOffset = CGPoint(x: -0.8 * envelope, y: -1.5 * envelope)
+            questionOpacity = progress > 0.12 && progress < 0.82 ? 1 : 0
+        case .wizard:
+            let lift = abs(sin(progress * .pi * 5))
+            motionTransform = CGAffineTransform(translationX: 0, y: -1.8 * lift)
+            leftArmAngle = -0.45 * sin(progress * .pi * 6)
+            rightArmAngle = 0.45 * sin(progress * .pi * 6)
+            exclamationOpacity = progress > 0.12 && progress < 0.78 ? 1 : 0
+        case .juggling:
+            motionTransform = CGAffineTransform(rotationAngle: sin(progress * .pi * 6) * 0.08)
+            leftArmAngle = sin(progress * .pi * 8) * 0.48
+            rightArmAngle = -sin(progress * .pi * 8) * 0.48
+            leftArmOffset = CGPoint(x: -0.8, y: -abs(sin(progress * .pi * 8)) * 2)
+            rightArmOffset = CGPoint(x: 0.8, y: -abs(cos(progress * .pi * 8)) * 2)
+        case .typing:
+            motionTransform = CGAffineTransform(translationX: sin(progress * .pi * 18) * 0.35, y: 0)
+            leftArmAngle = sin(progress * .pi * 14) * 0.30
+            rightArmAngle = -sin(progress * .pi * 14) * 0.30
+            leftArmOffset = CGPoint(x: 0, y: abs(sin(progress * .pi * 14)))
+            rightArmOffset = CGPoint(x: 0, y: abs(cos(progress * .pi * 14)))
+        case .disconnected:
+            let envelope = sin(progress * .pi)
+            motionTransform = CGAffineTransform(translationX: sin(progress * .pi * 5) * 1.1 * envelope, y: 0)
+            questionOpacity = progress < 0.58 ? 1 : 0
+            exclamationOpacity = progress >= 0.58 && progress < 0.88 ? 1 : 0
+        case .error:
+            let drop = sin(min(1, progress * 2) * .pi / 2)
+            motionTransform = CGAffineTransform(translationX: sin(progress * .pi * 16) * 0.7 * (1 - progress), y: 2.8 * drop)
+            eyeOpacity = progress > 0.22 ? 0.08 : eyeOpacity
+            tearOpacity = progress > 0.32 && progress < 0.88 ? 1 : 0
+            exclamationOpacity = progress < 0.42 ? 1 : 0
         }
 
         CATransaction.begin()
@@ -886,6 +1001,29 @@ private final class CodexPetView: NSView {
 private struct CodexTodaySnapshot {
     let totalTokens: Int64
     let estimatedCost: Double
+    let conversationCount: Int
+    let sevenDayTokens: Int64?
+    let sevenDayActiveDays: Int?
+    let thirtyDayTokens: Int64?
+    let thirtyDayAverage: Int64?
+
+    init(
+        totalTokens: Int64,
+        estimatedCost: Double,
+        conversationCount: Int = 0,
+        sevenDayTokens: Int64? = nil,
+        sevenDayActiveDays: Int? = nil,
+        thirtyDayTokens: Int64? = nil,
+        thirtyDayAverage: Int64? = nil
+    ) {
+        self.totalTokens = totalTokens
+        self.estimatedCost = estimatedCost
+        self.conversationCount = conversationCount
+        self.sevenDayTokens = sevenDayTokens
+        self.sevenDayActiveDays = sevenDayActiveDays
+        self.thirtyDayTokens = thirtyDayTokens
+        self.thirtyDayAverage = thirtyDayAverage
+    }
 }
 
 private enum CodexTodayReader {
@@ -953,7 +1091,21 @@ private enum CodexTodayReader {
         } else {
             return nil
         }
-        return CodexTodaySnapshot(totalTokens: totalTokens, estimatedCost: estimatedCost)
+        let rolling = response["rolling"] as? [String: Any]
+        let last7 = rolling?["last_7d"] as? [String: Any]
+        let last7Totals = last7?["totals"] as? [String: Any]
+        let last30 = rolling?["last_30d"] as? [String: Any]
+        let last30Totals = last30?["totals"] as? [String: Any]
+
+        return CodexTodaySnapshot(
+            totalTokens: totalTokens,
+            estimatedCost: estimatedCost,
+            conversationCount: Int(int64(totals["conversation_count"])),
+            sevenDayTokens: last7Totals.map { int64($0["billable_total_tokens"]) },
+            sevenDayActiveDays: last7.map { Int(int64($0["active_days"])) },
+            thirtyDayTokens: last30Totals.map { int64($0["billable_total_tokens"]) },
+            thirtyDayAverage: last30.map { int64($0["avg_per_active_day"]) }
+        )
     }
 
     private static func localLogSnapshot() -> CodexTodaySnapshot? {

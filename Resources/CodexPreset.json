@@ -61,7 +61,7 @@
   },
   {
     "type": "codexToday",
-    "width": 252,
+    "width": 320,
     "align": "center",
     "refreshInterval": 10,
     "matchAppId": "^com\\.openai\\.codex$"

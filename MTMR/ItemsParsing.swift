@@ -374,11 +374,11 @@ enum ItemType: Decodable {
             self = .cpu(refreshInterval: refreshInterval)
 
         case .codexToday:
-            let refreshInterval = try container.decodeIfPresent(Double.self, forKey: .refreshInterval) ?? 30.0
+            let refreshInterval = try container.decodeIfPresent(Double.self, forKey: .refreshInterval) ?? 10.0
             self = .codexToday(refreshInterval: refreshInterval)
 
         case .codexQuota:
-            let refreshInterval = try container.decodeIfPresent(Double.self, forKey: .refreshInterval) ?? 30.0
+            let refreshInterval = try container.decodeIfPresent(Double.self, forKey: .refreshInterval) ?? 10.0
             self = .codexQuota(refreshInterval: refreshInterval)
 
         case .dock:

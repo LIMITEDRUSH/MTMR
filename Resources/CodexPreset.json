@@ -63,14 +63,14 @@
     "type": "codexToday",
     "width": 252,
     "align": "center",
-    "refreshInterval": 30,
+    "refreshInterval": 10,
     "matchAppId": "^com\\.openai\\.codex$"
   },
   {
     "type": "codexQuota",
     "width": 230,
     "align": "right",
-    "refreshInterval": 30,
+    "refreshInterval": 10,
     "matchAppId": "^com\\.openai\\.codex$"
   }
 ]

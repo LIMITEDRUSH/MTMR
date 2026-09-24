@@ -5,8 +5,7 @@ import AppKit
 
 /// A compact Codex allowance meter that pairs the native Touch Bar container
 /// with SILO's green/amber/red quota states. The meter asks the locally
-/// authenticated Codex app-server for a fresh snapshot and falls back to the
-/// most recent local session event if the app-server is unavailable.
+/// authenticated Codex app-server for a fresh snapshot every refresh cycle.
 final class CodexQuotaBarItem: NSCustomTouchBarItem {
     private let refreshInterval: TimeInterval
     private let refreshQueue = DispatchQueue(label: "mtmr.codex-quota", qos: .utility)
@@ -173,20 +172,36 @@ private struct CodexQuotaSnapshot {
 }
 
 private enum CodexQuotaReader {
-    private static let tailSize: UInt64 = 256 * 1024
-    private static let usedPercentPattern = try! NSRegularExpression(
-        pattern: #"\"used_percent\"\s*:\s*([0-9]+(?:\.[0-9]+)?)"#
-    )
-    private static let resetsAtPattern = try! NSRegularExpression(
-        pattern: #"\"resets_at\"\s*:\s*([0-9]+)"#
-    )
+    private final class AppServerRequestState {
+        var buffer = Data()
+        var didSendRateLimitRequest = false
+        var result: CodexQuotaSnapshot?
+        var isFinished = false
+        let lock = NSLock()
+        let completion = DispatchSemaphore(value: 0)
+    }
+
+    private static let snapshotLock = NSLock()
+    private static var lastSnapshot: CodexQuotaSnapshot?
+    private static var lastFetchAt: Date?
+    private static let cacheLifetime: TimeInterval = 8
 
     static func snapshot() -> CodexQuotaSnapshot? {
-        if let liveSnapshot = liveSnapshot() {
-            return liveSnapshot
+        // Both Codex widgets refresh on their own utility queues. Serialize
+        // requests and reuse a result for a few seconds so one 10-second tick
+        // produces only one app-server connection.
+        snapshotLock.lock()
+        defer { snapshotLock.unlock() }
+
+        if let lastFetchAt = lastFetchAt,
+           Date().timeIntervalSince(lastFetchAt) < cacheLifetime {
+            return lastSnapshot
         }
 
-        return cachedSnapshot()
+        let freshSnapshot = liveSnapshot()
+        lastSnapshot = freshSnapshot
+        lastFetchAt = Date()
+        return freshSnapshot
     }
 
     private static func liveSnapshot() -> CodexQuotaSnapshot? {
@@ -203,42 +218,89 @@ private enum CodexQuotaReader {
         process.standardOutput = output
         process.standardError = errorOutput
 
-        let requests = [
-            #"{"id":1,"method":"initialize","params":{"clientInfo":{"name":"mtmr-codex-quota","version":"1.0"}}}"#,
-            #"{"method":"initialized"}"#,
-            #"{"id":2,"method":"account/rateLimits/read","params":null}"#
-        ].joined(separator: "\n") + "\n"
+        let state = AppServerRequestState()
+        let inputHandle = input.fileHandleForWriting
+        let outputHandle = output.fileHandleForReading
+
+        outputHandle.readabilityHandler = { handle in
+            let data = handle.availableData
+            var shouldSendRateLimitRequest = false
+            var shouldSignal = false
+
+            state.lock.lock()
+            if data.isEmpty {
+                if !state.isFinished {
+                    state.isFinished = true
+                    shouldSignal = true
+                }
+            } else {
+                state.buffer.append(data)
+                while let newlineIndex = state.buffer.firstIndex(of: 0x0A) {
+                    let lineData = Data(state.buffer[..<newlineIndex])
+                    state.buffer.removeSubrange(...newlineIndex)
+                    guard !lineData.isEmpty,
+                          let object = try? JSONSerialization.jsonObject(with: lineData),
+                          let message = object as? [String: Any],
+                          let messageID = (message["id"] as? NSNumber)?.intValue else { continue }
+
+                    if messageID == 1 && !state.didSendRateLimitRequest {
+                        state.didSendRateLimitRequest = true
+                        shouldSendRateLimitRequest = true
+                    } else if messageID == 2 {
+                        if let result = message["result"] as? [String: Any],
+                           let rateLimit = primaryRateLimit(from: result),
+                           let used = rateLimit["usedPercent"] as? NSNumber {
+                            let resetsAt = (rateLimit["resetsAt"] as? NSNumber).map {
+                                Date(timeIntervalSince1970: $0.doubleValue)
+                            }
+                            state.result = CodexQuotaSnapshot(
+                                remainingPercent: min(100, max(0, 100 - used.doubleValue)),
+                                resetsAt: resetsAt
+                            )
+                        }
+                        if !state.isFinished {
+                            state.isFinished = true
+                            shouldSignal = true
+                        }
+                    }
+                }
+            }
+            state.lock.unlock()
+
+            // The app-server protocol requires initialize to finish before
+            // initialized and account/rateLimits/read are sent.
+            if shouldSendRateLimitRequest {
+                let requests = [
+                    #"{"method":"initialized","params":{}}"#,
+                    #"{"id":2,"method":"account/rateLimits/read"}"#
+                ].joined(separator: "\n") + "\n"
+                inputHandle.write(Data(requests.utf8))
+            }
+            if shouldSignal {
+                state.completion.signal()
+            }
+        }
 
         do {
             try process.run()
-            input.fileHandleForWriting.write(Data(requests.utf8))
-            input.fileHandleForWriting.closeFile()
-            let responseData = output.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            guard process.terminationStatus == 0,
-                  let response = String(data: responseData, encoding: .utf8) else { return nil }
-
-            for line in response.split(separator: "\n") {
-                guard let data = String(line).data(using: .utf8),
-                      let object = try? JSONSerialization.jsonObject(with: data),
-                      let message = object as? [String: Any],
-                      (message["id"] as? NSNumber)?.intValue == 2,
-                      let result = message["result"] as? [String: Any],
-                      let rateLimit = primaryRateLimit(from: result),
-                      let used = rateLimit["usedPercent"] as? NSNumber else { continue }
-                let resetsAt = (rateLimit["resetsAt"] as? NSNumber).map {
-                    Date(timeIntervalSince1970: $0.doubleValue)
-                }
-                return CodexQuotaSnapshot(
-                    remainingPercent: min(100, max(0, 100 - used.doubleValue)),
-                    resetsAt: resetsAt
-                )
-            }
+            let initialize = #"{"id":1,"method":"initialize","params":{"clientInfo":{"name":"mtmr-codex-quota","version":"1.0"}}}"# + "\n"
+            inputHandle.write(Data(initialize.utf8))
+            _ = state.completion.wait(timeout: .now() + 5)
         } catch {
+            outputHandle.readabilityHandler = nil
             return nil
         }
 
-        return nil
+        outputHandle.readabilityHandler = nil
+        inputHandle.closeFile()
+        if process.isRunning {
+            process.terminate()
+        }
+
+        state.lock.lock()
+        let result = state.result
+        state.lock.unlock()
+        return result
     }
 
     private static func codexExecutableURL() -> URL? {
@@ -264,67 +326,6 @@ private enum CodexQuotaReader {
         return rateLimits["primary"] as? [String: Any]
     }
 
-    private static func cachedSnapshot() -> CodexQuotaSnapshot? {
-        let sessionsURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex/sessions", isDirectory: true)
-        let keys: [URLResourceKey] = [.isRegularFileKey, .contentModificationDateKey]
-        guard let enumerator = FileManager.default.enumerator(
-            at: sessionsURL,
-            includingPropertiesForKeys: keys,
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]
-        ) else {
-            return nil
-        }
-
-        var candidates: [(url: URL, date: Date)] = []
-        for case let url as URL in enumerator where url.pathExtension == "jsonl" {
-            guard let values = try? url.resourceValues(forKeys: Set(keys)),
-                  values.isRegularFile == true else { continue }
-            candidates.append((url, values.contentModificationDate ?? .distantPast))
-        }
-
-        for candidate in candidates.sorted(by: { $0.date > $1.date }).prefix(12) {
-            if let snapshot = mostRecentSnapshot(in: candidate.url) {
-                return snapshot
-            }
-        }
-        return nil
-    }
-
-    private static func mostRecentSnapshot(in url: URL) -> CodexQuotaSnapshot? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
-        defer { try? handle.close() }
-
-        guard let fileSize = try? handle.seekToEnd() else { return nil }
-        let start = fileSize > tailSize ? fileSize - tailSize : 0
-        try? handle.seek(toOffset: start)
-        guard let data = try? handle.readToEnd(),
-              let text = String(data: data, encoding: .utf8) else { return nil }
-
-        for line in text.split(separator: "\n", omittingEmptySubsequences: true).reversed() {
-            guard line.contains("\"rate_limits\"") && line.contains("\"used_percent\"") else { continue }
-            let lineString = String(line)
-            let range = NSRange(lineString.startIndex..<lineString.endIndex, in: lineString)
-            let matches = usedPercentPattern.matches(in: lineString, range: range)
-            let values = matches.compactMap { match -> Double? in
-                guard let range = Range(match.range(at: 1), in: lineString) else { return nil }
-                return Double(lineString[range])
-            }
-            if let mostUsed = values.max() {
-                let resetMatches = resetsAtPattern.matches(in: lineString, range: range)
-                let resetsAt = resetMatches.last.flatMap { match -> Date? in
-                    guard let range = Range(match.range(at: 1), in: lineString),
-                          let seconds = Double(lineString[range]) else { return nil }
-                    return Date(timeIntervalSince1970: seconds)
-                }
-                return CodexQuotaSnapshot(
-                    remainingPercent: min(100, max(0, 100 - mostUsed)),
-                    resetsAt: resetsAt
-                )
-            }
-        }
-        return nil
-    }
 }
 
 /// TokenTracker-style daily activity, compressed into a native Touch Bar pill.
@@ -335,7 +336,7 @@ final class CodexTodayBarItem: NSCustomTouchBarItem {
     private let todayView = CodexTodayView(frame: NSRect(x: 0, y: 0, width: 252, height: 30))
 
     init(identifier: NSTouchBarItem.Identifier, refreshInterval: TimeInterval) {
-        self.refreshInterval = max(15, refreshInterval)
+        self.refreshInterval = max(10, refreshInterval)
         super.init(identifier: identifier)
         view = todayView
         refreshAndSchedule()

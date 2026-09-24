@@ -119,8 +119,10 @@ The preset includes SF Symbol buttons and key combinations, an animated and
 interactive Clawd usage widget, and a color-coded Codex allowance meter. The
 usage widget prefers TokenTracker's read-only localhost API when TokenTracker
 is running, then falls back to local `~/.codex/sessions` logs. The allowance
-widget queries the locally authenticated `codex app-server` and falls back to
-the most recent local session snapshot. No usage data is sent by MTMR.
+widget performs the required two-stage handshake with the locally authenticated
+`codex app-server` every 10 seconds. If live quota data is unavailable it shows
+an unavailable state instead of guessing from stale session logs. No usage data
+is sent by MTMR.
 
 To install it:
 

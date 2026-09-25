@@ -579,48 +579,60 @@ private enum CodexPetMood {
     case quotaLow
 }
 
-/// A native Core Animation recreation of TokenTracker's official Clawd. Its
-/// geometry, colors, idle rhythm, and reactions mirror TokenTracker's SVG pet,
-/// while avoiding WebKit's frozen animation layers inside NSTouchBar.
+/// A native AppKit recreation of TokenTracker's official Clawd. It includes
+/// every state in TokenTracker's ClawdState enum plus the five physical tap
+/// reactions, rendered as crisp pixels so animation remains live in NSTouchBar.
 private final class CodexPetView: NSView {
-    private let clawdColor = NSColor(calibratedRed: 0xDE / 255, green: 0x88 / 255, blue: 0x6D / 255, alpha: 1).cgColor
-    private let cyanColor = NSColor(calibratedRed: 0x40 / 255, green: 0xC4 / 255, blue: 1, alpha: 1).cgColor
-    private let characterLayer = CALayer()
-    private let motionLayer = CALayer()
-    private let breathLayer = CALayer()
-    private let eyesLayer = CALayer()
-    private let leftArmLayer = CALayer()
-    private let rightArmLayer = CALayer()
-    private let mouthLayer = CALayer()
-    private let tearLayer = CALayer()
-    private let questionLayer = CALayer()
-    private let exclamationLayer = CALayer()
-    private let interactionView = NSView()
-
+    private let clawdColor = NSColor(calibratedRed: 0xDE / 255, green: 0x88 / 255, blue: 0x6D / 255, alpha: 1)
+    private let cyanColor = NSColor(calibratedRed: 0x40 / 255, green: 0xC4 / 255, blue: 1, alpha: 1)
+    private let goldColor = NSColor(calibratedRed: 1, green: 0.82, blue: 0.40, alpha: 1)
+    private let wizardColor = NSColor(calibratedRed: 0.25, green: 0.19, blue: 0.55, alpha: 1)
     private var automaticActionTimer: Timer?
     private var frameTimer: Timer?
+    private let interactionView = NSView()
     private var pendingSingleTap: DispatchWorkItem?
     private var ignoreSingleTapUntil: CFTimeInterval = 0
-    private var action: PetAction = .idle
+    private var action: PetAction = .idleLiving
+    private var physicalAction: PhysicalAction?
+    private var physicalActionStarted: CFTimeInterval = 0
     private var displayMood: CodexPetMood = .quotaComfortable
     private var actionStarted: CFTimeInterval = 0
     private var actionDuration: TimeInterval = 0
     private var tapAnimationIndex = 0
 
-    private enum PetAction {
-        case idle
-        case happy
-        case wizard
-        case juggling
-        case thinking
-        case ultrathink
-        case typing
-        case disconnected
-        case look
-        case doze
+    /// Matches TokenTracker's complete ClawdState enum, including mini states.
+    private enum PetAction: CaseIterable {
+        case idleLiving
+        case idleLook
+        case idleDoze
         case sleeping
+        case workingTyping
+        case workingThinking
+        case workingUltrathink
+        case workingJuggling
+        case workingWizard
+        case workingOverheated
+        case happy
+        case disconnected
         case error
+        case yawning
+        case waking
+        case miniIdle
+        case miniPeek
+        case miniAlert
+        case miniHappy
+        case miniSleep
     }
+
+    private enum PhysicalAction: CaseIterable {
+        case jump
+        case wiggle
+        case flip
+        case multiBlink
+        case wave
+    }
+
+    override var isFlipped: Bool { true }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -632,63 +644,9 @@ private final class CodexPetView: NSView {
         configurePet()
     }
 
-    override func layout() {
-        super.layout()
-        let scale = min(bounds.width / 15, bounds.height / 12) * 0.90
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        characterLayer.bounds = CGRect(x: 0, y: 4, width: 15, height: 12)
-        characterLayer.position = CGPoint(x: bounds.midX, y: bounds.midY)
-        characterLayer.setAffineTransform(CGAffineTransform(scaleX: scale, y: scale))
-        CATransaction.commit()
-    }
-
     private func configurePet() {
         wantsLayer = true
-        guard let hostLayer = layer else { return }
-
-        characterLayer.bounds = CGRect(x: 0, y: 4, width: 15, height: 12)
-        characterLayer.isGeometryFlipped = true
-        characterLayer.masksToBounds = false
-        hostLayer.addSublayer(characterLayer)
-
-        motionLayer.frame = CGRect(x: 0, y: 0, width: 15, height: 16)
-        motionLayer.isGeometryFlipped = true
-        breathLayer.frame = CGRect(x: 0, y: 0, width: 15, height: 16)
-        breathLayer.isGeometryFlipped = true
-        characterLayer.addSublayer(motionLayer)
-        motionLayer.addSublayer(breathLayer)
-
-        let shadow = pixelRect(3, 15, 9, 1, NSColor.black.withAlphaComponent(0.5).cgColor)
-        characterLayer.addSublayer(shadow)
-        for x in [3, 5, 9, 11] {
-            characterLayer.addSublayer(pixelRect(CGFloat(x), 13, 1, 2, clawdColor))
-        }
-
-        breathLayer.addSublayer(pixelRect(2, 6, 11, 7, clawdColor))
-        configureArm(leftArmLayer, frame: CGRect(x: 0, y: 9, width: 2, height: 2), anchorX: 1)
-        configureArm(rightArmLayer, frame: CGRect(x: 13, y: 9, width: 2, height: 2), anchorX: 0)
-        breathLayer.addSublayer(leftArmLayer)
-        breathLayer.addSublayer(rightArmLayer)
-
-        eyesLayer.frame = breathLayer.bounds
-        eyesLayer.isGeometryFlipped = true
-        // Fixed, straight-ahead eyes: no pointer-following gaze toward the screen above.
-        eyesLayer.addSublayer(pixelRect(4, 8, 2, 1, NSColor.black.cgColor))
-        eyesLayer.addSublayer(pixelRect(9, 8, 2, 1, NSColor.black.cgColor))
-        breathLayer.addSublayer(eyesLayer)
-
-        mouthLayer.frame = CGRect(x: 6, y: 10, width: 3, height: 2)
-        mouthLayer.backgroundColor = NSColor.black.cgColor
-        mouthLayer.opacity = 0
-        tearLayer.frame = CGRect(x: 3.5, y: 10, width: 1, height: 1)
-        tearLayer.backgroundColor = cyanColor
-        tearLayer.opacity = 0
-        breathLayer.addSublayer(mouthLayer)
-        breathLayer.addSublayer(tearLayer)
-
-        buildQuestionMark()
-        buildExclamationMark()
+        layer?.masksToBounds = false
         startFrameUpdates()
         configureInteraction()
 
@@ -700,59 +658,17 @@ private final class CodexPetView: NSView {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             guard let self = self, self.actionDuration == 0 else { return }
-            self.setAction(.happy, duration: 2.4)
+            self.setAction(.happy, duration: 2.4, physical: .wave)
         }
-    }
-
-    private func pixelRect(_ x: CGFloat, _ y: CGFloat, _ width: CGFloat, _ height: CGFloat, _ color: CGColor) -> CALayer {
-        let result = CALayer()
-        result.frame = CGRect(x: x, y: y, width: width, height: height)
-        result.backgroundColor = color
-        result.magnificationFilter = .nearest
-        return result
-    }
-
-    private func configureArm(_ arm: CALayer, frame: CGRect, anchorX: CGFloat) {
-        arm.bounds = CGRect(origin: .zero, size: frame.size)
-        arm.anchorPoint = CGPoint(x: anchorX, y: 0)
-        arm.position = CGPoint(
-            x: frame.origin.x + frame.width * anchorX,
-            y: frame.origin.y
-        )
-        arm.backgroundColor = clawdColor
-    }
-
-    private func buildQuestionMark() {
-        questionLayer.frame = CGRect(x: 0, y: 0, width: 15, height: 16)
-        questionLayer.isGeometryFlipped = true
-        questionLayer.opacity = 0
-        let blocks = [
-            CGRect(x: 1, y: 0, width: 2, height: 1), CGRect(x: 0, y: 1, width: 1, height: 1),
-            CGRect(x: 3, y: 1, width: 1, height: 2), CGRect(x: 2, y: 3, width: 1, height: 1),
-            CGRect(x: 1, y: 4, width: 1, height: 1), CGRect(x: 1, y: 6, width: 1, height: 1)
-        ]
-        blocks.forEach { rect in
-            questionLayer.addSublayer(pixelRect(rect.origin.x, rect.origin.y + 4, rect.width, rect.height, cyanColor))
-        }
-        characterLayer.addSublayer(questionLayer)
-    }
-
-    private func buildExclamationMark() {
-        exclamationLayer.frame = CGRect(x: 0, y: 0, width: 15, height: 16)
-        exclamationLayer.isGeometryFlipped = true
-        exclamationLayer.opacity = 0
-        exclamationLayer.addSublayer(pixelRect(13, 4, 1, 4, NSColor.white.cgColor))
-        exclamationLayer.addSublayer(pixelRect(13, 9, 1, 1, NSColor.white.cgColor))
-        characterLayer.addSublayer(exclamationLayer)
     }
 
     private func startFrameUpdates() {
         let timer = Timer(timeInterval: 1.0 / 12.0, repeats: true) { [weak self] _ in
-            self?.updateAnimationFrame()
+            self?.needsDisplay = true
         }
         RunLoop.main.add(timer, forMode: .common)
         frameTimer = timer
-        updateAnimationFrame()
+        needsDisplay = true
     }
 
     private func configureInteraction() {
@@ -791,204 +707,360 @@ private final class CodexPetView: NSView {
     @objc private func doubleTapped(_: NSClickGestureRecognizer) {
         ignoreSingleTapUntil = CACurrentMediaTime() + 0.4
         pendingSingleTap?.cancel()
-        setAction(.ultrathink, duration: 3.5)
+        setAction(.workingUltrathink, duration: 3.5, physical: .flip)
     }
 
     @objc private func longPressed(_ sender: NSPressGestureRecognizer) {
         guard sender.state == .began else { return }
         ignoreSingleTapUntil = CACurrentMediaTime() + 0.8
         pendingSingleTap?.cancel()
-        setAction(.happy, duration: 3.2)
+        setAction(.workingWizard, duration: 3.2, physical: .wave)
     }
 
     private func performAutomaticAction() {
         guard actionDuration == 0 else { return }
-        switch Int.random(in: 0 ... 5) {
-        case 0: setAction(.doze, duration: 3.8)
-        case 1: setAction(.look, duration: 3.2)
-        case 2: setAction(.thinking, duration: 3.0)
-        case 3: setAction(.typing, duration: 2.8)
-        case 4: setAction(.juggling, duration: 3.0)
-        default: setAction(.happy, duration: 2.5)
-        }
+        let ambient: [PetAction] = [
+            .idleLook, .idleDoze, .workingThinking, .workingTyping,
+            .workingJuggling, .workingWizard, .workingUltrathink,
+            .yawning, .waking, .miniPeek, .miniHappy
+        ]
+        setAction(ambient.randomElement() ?? .idleLiving, duration: 3.2)
     }
 
-    /// TokenTracker cycles these eleven Clawd scenes on every pet or bubble tap.
-    /// The compact Touch Bar drawing keeps the same emotional beats while using
-    /// Core Animation instead of SwiftUI Canvas.
+    /// Cycle the complete official TokenTracker Clawd state set. Each scene is
+    /// paired with one of the five physical reactions so no state or tap motion
+    /// is omitted from the Touch Bar adaptation.
     func showCarouselAction(at index: Int) {
-        let actions: [(PetAction, TimeInterval)] = [
-            (.happy, 2.5), (.wizard, 2.8), (.juggling, 2.8),
-            (.thinking, 2.8), (.ultrathink, 3.2), (.typing, 2.6),
-            (.disconnected, 2.8), (.look, 2.5), (.doze, 3.2),
-            (.sleeping, 3.6), (.error, 3.0)
-        ]
-        let selection = actions[index % actions.count]
-        setAction(selection.0, duration: selection.1)
+        let actions = PetAction.allCases
+        let reactions = PhysicalAction.allCases
+        setAction(
+            actions[index % actions.count],
+            duration: 3.0,
+            physical: reactions[index % reactions.count]
+        )
     }
 
     func showMood(_ mood: CodexPetMood) {
         displayMood = mood
         switch mood {
         case .usage:
-            setAction(.happy, duration: 2.8)
+            setAction(.happy, duration: 2.8, physical: .jump)
         case .quotaComfortable:
-            setAction(.look, duration: 2.6)
+            setAction(.idleLook, duration: 2.6)
         case .quotaLow:
-            setAction(.error, duration: 3.4)
+            setAction(.workingOverheated, duration: 3.4, physical: .wiggle)
         }
     }
 
-    private func setAction(_ newAction: PetAction, duration: TimeInterval) {
+    private func setAction(_ newAction: PetAction, duration: TimeInterval, physical: PhysicalAction? = nil) {
         action = newAction
         actionStarted = CACurrentMediaTime()
         actionDuration = duration
-        updateAnimationFrame()
+        physicalAction = physical
+        physicalActionStarted = actionStarted
+        needsDisplay = true
     }
 
-    private func updateAnimationFrame() {
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
         let now = CACurrentMediaTime()
-        var progress: CGFloat = 0
+        var progress: CGFloat
         if actionDuration > 0 {
             progress = CGFloat((now - actionStarted) / actionDuration)
             if progress >= 1 {
-                action = .idle
+                action = .idleLiving
                 actionDuration = 0
                 progress = 0
             }
+        } else {
+            progress = CGFloat(fmod(now, 3.2) / 3.2)
         }
-
-        let breathePhase = CGFloat(fmod(now, 3.2) / 3.2)
-        let breatheScale = 1 - 0.11 * (0.5 - 0.5 * cos(breathePhase * .pi * 2))
+        let phase = CGFloat(fmod(now, 1.0))
         let blinkPhase = fmod(now, 4.0)
-        var motionTransform = CGAffineTransform(
-            translationX: 0,
-            y: sin(breathePhase * .pi * 2) * 0.9
-        )
-        let eyeTransform = CGAffineTransform.identity
-        var leftArmAngle: CGFloat = 0
-        var rightArmAngle: CGFloat = 0
-        var leftArmOffset = CGPoint.zero
-        var rightArmOffset = CGPoint.zero
-        var eyeOpacity: Float = blinkPhase > 1.82 && blinkPhase < 2.02 ? 0.05 : 1
-        var mouthOpacity: Float = 0
-        var tearOpacity: Float = 0
-        var questionOpacity: Float = 0
-        var exclamationOpacity: Float = 0
+        var dx: CGFloat = 0
+        var dy: CGFloat = sin(CGFloat(now) * 2) * 0.18
+        var flipped = false
+        var forceBlink = blinkPhase > 1.82 && blinkPhase < 2.02
+        var wave = false
 
-        let idleWavePhase = fmod(now, 6.0)
-        if idleWavePhase > 4.2 {
-            let waveProgress = CGFloat((idleWavePhase - 4.2) / 1.8)
-            leftArmAngle = sin(waveProgress * .pi * 4) * 0.34 * (1 - waveProgress)
-            leftArmOffset = CGPoint(x: -0.8, y: -1.4 * sin(waveProgress * .pi))
+        if let physicalAction, now - physicalActionStarted < 0.75 {
+            let physicalProgress = CGFloat((now - physicalActionStarted) / 0.75)
+            switch physicalAction {
+            case .jump:
+                dy -= abs(sin(physicalProgress * .pi)) * 2.1
+            case .wiggle:
+                dx += sin(physicalProgress * .pi * 8) * (1 - physicalProgress)
+            case .flip:
+                flipped = physicalProgress > 0.18 && physicalProgress < 0.82
+            case .multiBlink:
+                forceBlink = Int(physicalProgress * 8) % 2 == 0
+            case .wave:
+                wave = true
+            }
         }
 
         switch action {
-        case .idle:
+        case .idleLiving:
             switch displayMood {
-            case .usage:
-                leftArmAngle = -0.17
-                rightArmAngle = 0.17
-                leftArmOffset = CGPoint(x: -0.5, y: -0.8)
-                rightArmOffset = CGPoint(x: 0.5, y: -0.8)
-            case .quotaComfortable:
-                motionTransform = CGAffineTransform(rotationAngle: -0.045)
-                leftArmAngle = -0.12
-                leftArmOffset = CGPoint(x: -0.5, y: -0.6)
-            case .quotaLow:
-                leftArmAngle = -0.25
-                rightArmAngle = 0.25
-                leftArmOffset = CGPoint(x: -0.8, y: -1.2)
-                rightArmOffset = CGPoint(x: 0.8, y: -1.2)
-                exclamationOpacity = 1
+            case .usage: wave = true
+            case .quotaComfortable: dx -= 0.2
+            case .quotaLow: wave = true
             }
-        case .look:
-            let direction: CGFloat = progress < 0.5 ? -1 : 1
-            let envelope = sin(min(max(progress, 0), 1) * .pi)
-            motionTransform = CGAffineTransform(translationX: direction * 2.1 * envelope, y: 0)
-            questionOpacity = progress > 0.10 && progress < 0.70 ? 1 : 0
-            let wave = sin(progress * .pi * 5) * 0.30 * (1 - progress)
-            if direction < 0 {
-                leftArmAngle = -wave
-                leftArmOffset = CGPoint(x: -0.8, y: -1.3 * envelope)
-            } else {
-                rightArmAngle = wave
-                rightArmOffset = CGPoint(x: 0.8, y: -1.3 * envelope)
-            }
-        case .ultrathink:
-            let fade = max(0, 1 - progress)
-            motionTransform = CGAffineTransform(translationX: sin(progress * .pi * 14) * 1.7 * fade, y: 0)
-            questionOpacity = progress > 0.05 && progress < 0.42 ? 1 : 0
-            exclamationOpacity = progress > 0.43 && progress < 0.78 ? 1 : 0
+            drawClawd(dx: dx, dy: dy, eyesClosed: forceBlink, wave: wave, flipped: flipped)
+        case .idleLook:
+            dx += sin(progress * .pi * 2) * 1.0
+            drawClawd(dx: dx, dy: dy, eyeShift: progress < 0.5 ? -0.7 : 0.7, wave: wave, flipped: flipped)
+            drawQuestion(dx: dx, dy: dy)
+        case .idleDoze:
+            drawClawd(dx: dx, dy: dy + 0.8, eyesClosed: true, mouth: .small, wave: wave, flipped: flipped)
+            drawZ(dx: dx, dy: dy)
+        case .sleeping:
+            drawCollapsed(dx: dx, dy: dy + 2.1, eyes: .closed, flipped: flipped)
+            drawZ(dx: dx, dy: dy)
+        case .workingTyping:
+            dx += sin(progress * .pi * 18) * 0.25
+            drawClawd(dx: dx, dy: dy, eyesClosed: forceBlink, armsUp: true, wave: wave, flipped: flipped)
+            drawTypingParticles(phase: phase, dx: dx, dy: dy)
+        case .workingThinking:
+            dx += sin(progress * .pi * 2) * 0.35
+            drawClawd(dx: dx, dy: dy, eyeShift: -0.55, handToFace: true, wave: wave, flipped: flipped)
+            drawThinkingDots(phase: phase, dx: dx, dy: dy)
+        case .workingUltrathink:
+            dx += sin(progress * .pi * 18) * 0.45
+            drawClawd(dx: dx, dy: dy, eyesClosed: forceBlink, armsUp: true, wave: wave, flipped: flipped)
+            drawRainbowCrown(phase: phase, dx: dx, dy: dy)
+            drawSparks(phase: phase, dx: dx, dy: dy)
+        case .workingJuggling:
+            drawClawd(dx: dx, dy: dy, eyesClosed: forceBlink, armsUp: true, wave: wave, flipped: flipped)
+            drawJugglingBalls(phase: phase, dx: dx, dy: dy)
+        case .workingWizard:
+            drawClawd(dx: dx, dy: dy + 0.5, eyesClosed: forceBlink, armSpread: true, wave: wave, flipped: flipped)
+            drawWizardCostume(phase: phase, dx: dx, dy: dy)
+        case .workingOverheated:
+            drawCollapsed(dx: dx + sin(progress * .pi * 16) * 0.35, dy: dy + 1.8, eyes: .crossed, hot: true, flipped: flipped)
+            drawSteam(phase: phase, dx: dx, dy: dy)
         case .happy:
-            leftArmAngle = sin(progress * .pi * 12) * 0.34
-            rightArmAngle = -sin(progress * .pi * 12) * 0.34
-            let lift = abs(sin(progress * .pi * 6))
-            leftArmOffset = CGPoint(x: -1, y: -2 * lift)
-            rightArmOffset = CGPoint(x: 1, y: -2 * lift)
-            exclamationOpacity = progress > 0.05 && progress < 0.82 ? 1 : 0
-            eyeOpacity = progress > 0.28 && progress < 0.40 ? 0.05 : 1
-        case .doze, .sleeping:
-            let yawnVisible = progress > 0.20 && progress < 0.78
-            mouthOpacity = yawnVisible ? 1 : 0
-            tearOpacity = actionDuration < 3.5 && progress > 0.35 && progress < 0.72 ? 1 : 0
-            let squash = 1 - (yawnVisible ? (actionDuration >= 3.5 ? 0.22 : 0.10) : 0)
-            motionTransform = CGAffineTransform(scaleX: 1, y: squash)
-            eyeOpacity = yawnVisible ? 0.05 : eyeOpacity
-            questionOpacity = actionDuration >= 3.5 && progress > 0.35 && progress < 0.8 ? 0.65 : 0
-        case .thinking:
-            let envelope = sin(progress * .pi)
-            motionTransform = CGAffineTransform(rotationAngle: -0.18 * envelope)
-            leftArmAngle = sin(progress * .pi * 6) * 0.30 * envelope
-            leftArmOffset = CGPoint(x: -0.8 * envelope, y: -1.5 * envelope)
-            questionOpacity = progress > 0.12 && progress < 0.82 ? 1 : 0
-        case .wizard:
-            let lift = abs(sin(progress * .pi * 5))
-            motionTransform = CGAffineTransform(translationX: 0, y: -1.8 * lift)
-            leftArmAngle = -0.45 * sin(progress * .pi * 6)
-            rightArmAngle = 0.45 * sin(progress * .pi * 6)
-            exclamationOpacity = progress > 0.12 && progress < 0.78 ? 1 : 0
-        case .juggling:
-            motionTransform = CGAffineTransform(rotationAngle: sin(progress * .pi * 6) * 0.08)
-            leftArmAngle = sin(progress * .pi * 8) * 0.48
-            rightArmAngle = -sin(progress * .pi * 8) * 0.48
-            leftArmOffset = CGPoint(x: -0.8, y: -abs(sin(progress * .pi * 8)) * 2)
-            rightArmOffset = CGPoint(x: 0.8, y: -abs(cos(progress * .pi * 8)) * 2)
-        case .typing:
-            motionTransform = CGAffineTransform(translationX: sin(progress * .pi * 18) * 0.35, y: 0)
-            leftArmAngle = sin(progress * .pi * 14) * 0.30
-            rightArmAngle = -sin(progress * .pi * 14) * 0.30
-            leftArmOffset = CGPoint(x: 0, y: abs(sin(progress * .pi * 14)))
-            rightArmOffset = CGPoint(x: 0, y: abs(cos(progress * .pi * 14)))
+            dy -= abs(sin(progress * .pi * 6)) * 1.3
+            drawClawd(dx: dx, dy: dy, eyes: .happy, armSpread: true, wave: wave, flipped: flipped)
+            drawSparkles(phase: phase, dx: dx, dy: dy)
         case .disconnected:
-            let envelope = sin(progress * .pi)
-            motionTransform = CGAffineTransform(translationX: sin(progress * .pi * 5) * 1.1 * envelope, y: 0)
-            questionOpacity = progress < 0.58 ? 1 : 0
-            exclamationOpacity = progress >= 0.58 && progress < 0.88 ? 1 : 0
+            dx += sin(progress * .pi * 5) * 0.65
+            drawClawd(dx: dx, dy: dy, eyeShift: progress < 0.5 ? -0.6 : 0.6, wave: wave, flipped: flipped)
+            progress < 0.58 ? drawQuestion(dx: dx, dy: dy) : drawExclamation(dx: dx, dy: dy, color: .white)
         case .error:
-            let drop = sin(min(1, progress * 2) * .pi / 2)
-            motionTransform = CGAffineTransform(translationX: sin(progress * .pi * 16) * 0.7 * (1 - progress), y: 2.8 * drop)
-            eyeOpacity = progress > 0.22 ? 0.08 : eyeOpacity
-            tearOpacity = progress > 0.32 && progress < 0.88 ? 1 : 0
-            exclamationOpacity = progress < 0.42 ? 1 : 0
+            drawCollapsed(dx: dx + sin(progress * .pi * 14) * 0.25, dy: dy + 2.0, eyes: .crossed, flipped: flipped)
+            drawSmoke(phase: phase, dx: dx, dy: dy)
+            drawExclamation(dx: dx, dy: dy, color: NSColor.systemRed)
+        case .yawning:
+            drawClawd(dx: dx, dy: dy + 0.5, eyesClosed: true, mouth: .wide, wave: wave, flipped: flipped)
+            pixel(3, 11, color: cyanColor, dx: dx, dy: dy)
+        case .waking:
+            drawClawd(dx: dx, dy: dy, eyes: .wide, armSpread: true, wave: wave, flipped: flipped)
+            drawSparkles(phase: phase, dx: dx, dy: dy)
+        case .miniIdle:
+            drawMini(dx: dx, dy: dy + 3.4, eyes: .normal, flipped: flipped)
+        case .miniPeek:
+            drawMini(dx: dx, dy: dy + 3.4, eyes: .wide, waving: true, flipped: flipped)
+        case .miniAlert:
+            drawMini(dx: dx, dy: dy + 3.4, eyes: .wide, flipped: flipped)
+            drawExclamation(dx: dx, dy: dy + 1, color: NSColor.systemRed)
+        case .miniHappy:
+            drawMini(dx: dx, dy: dy + 3.4 - abs(sin(progress * .pi * 6)), eyes: .happy, waving: true, flipped: flipped)
+            drawSparkles(phase: phase, dx: dx, dy: dy)
+        case .miniSleep:
+            drawMini(dx: dx, dy: dy + 4.0, eyes: .closed, flipped: flipped)
+            drawZ(dx: dx, dy: dy + 1)
         }
+    }
 
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        motionLayer.setAffineTransform(motionTransform)
-        breathLayer.setAffineTransform(CGAffineTransform(scaleX: 1, y: breatheScale))
-        eyesLayer.setAffineTransform(eyeTransform)
-        eyesLayer.opacity = eyeOpacity
-        leftArmLayer.setAffineTransform(CGAffineTransform(rotationAngle: leftArmAngle))
-        rightArmLayer.setAffineTransform(CGAffineTransform(rotationAngle: rightArmAngle))
-        leftArmLayer.position = CGPoint(x: 2 + leftArmOffset.x, y: 9 + leftArmOffset.y)
-        rightArmLayer.position = CGPoint(x: 13 + rightArmOffset.x, y: 9 + rightArmOffset.y)
-        mouthLayer.opacity = mouthOpacity
-        tearLayer.opacity = tearOpacity
-        questionLayer.opacity = questionOpacity
-        exclamationLayer.opacity = exclamationOpacity
-        CATransaction.commit()
-        CATransaction.flush()
+    private enum EyeStyle { case normal, closed, crossed, happy, wide }
+    private enum MouthStyle { case none, small, wide }
+
+    private func drawClawd(
+        dx: CGFloat, dy: CGFloat, eyes: EyeStyle = .normal, eyeShift: CGFloat = 0,
+        eyesClosed: Bool = false, mouth: MouthStyle = .none, armsUp: Bool = false,
+        armSpread: Bool = false, handToFace: Bool = false, wave: Bool = false,
+        flipped: Bool = false
+    ) {
+        pixel(3, 14, width: 9, color: NSColor.black.withAlphaComponent(0.45), dx: dx, dy: dy, flipped: flipped)
+        pixel(2, 6, width: 11, height: 7, color: clawdColor, dx: dx, dy: dy, flipped: flipped)
+        let armY: CGFloat = armsUp ? 6 : 9
+        pixel(0, armY, width: 2, height: 2, color: clawdColor, dx: dx, dy: dy, flipped: flipped)
+        pixel(13, wave ? 6 + sin(CGFloat(CACurrentMediaTime()) * 12) : armY, width: 2, height: 2, color: clawdColor, dx: dx, dy: dy, flipped: flipped)
+        if armSpread {
+            pixel(0, 8, width: 3, color: clawdColor, dx: dx, dy: dy, flipped: flipped)
+            pixel(12, 8, width: 3, color: clawdColor, dx: dx, dy: dy, flipped: flipped)
+        }
+        if handToFace { pixel(2, 7, width: 3, color: clawdColor, dx: dx, dy: dy, flipped: flipped) }
+        for x in [3, 5, 9, 11] { pixel(CGFloat(x), 13, height: 2, color: clawdColor, dx: dx, dy: dy, flipped: flipped) }
+        drawEyes(eyesClosed ? .closed : eyes, shift: eyeShift, dx: dx, dy: dy, flipped: flipped)
+        if mouth == .small { pixel(7, 10, color: .black, dx: dx, dy: dy, flipped: flipped) }
+        if mouth == .wide { pixel(6, 10, width: 3, height: 2, color: .black, dx: dx, dy: dy, flipped: flipped) }
+    }
+
+    private func drawEyes(_ style: EyeStyle, shift: CGFloat = 0, dx: CGFloat, dy: CGFloat, flipped: Bool) {
+        switch style {
+        case .normal:
+            pixel(4 + shift, 8, width: 2, color: .black, dx: dx, dy: dy, flipped: flipped)
+            pixel(9 + shift, 8, width: 2, color: .black, dx: dx, dy: dy, flipped: flipped)
+        case .closed:
+            pixel(4, 9, width: 2, height: 0.6, color: .black, dx: dx, dy: dy, flipped: flipped)
+            pixel(9, 9, width: 2, height: 0.6, color: .black, dx: dx, dy: dy, flipped: flipped)
+        case .crossed:
+            for x in [4, 9] {
+                pixel(CGFloat(x), 8, color: .black, dx: dx, dy: dy, flipped: flipped)
+                pixel(CGFloat(x + 1), 9, color: .black, dx: dx, dy: dy, flipped: flipped)
+                pixel(CGFloat(x + 1), 8, color: .black, dx: dx, dy: dy, flipped: flipped)
+                pixel(CGFloat(x), 9, color: .black, dx: dx, dy: dy, flipped: flipped)
+            }
+        case .happy:
+            pixel(4, 9, color: .black, dx: dx, dy: dy, flipped: flipped)
+            pixel(5, 8, color: .black, dx: dx, dy: dy, flipped: flipped)
+            pixel(9, 8, color: .black, dx: dx, dy: dy, flipped: flipped)
+            pixel(10, 9, color: .black, dx: dx, dy: dy, flipped: flipped)
+        case .wide:
+            pixel(4, 7.5, width: 2, height: 2, color: .black, dx: dx, dy: dy, flipped: flipped)
+            pixel(9, 7.5, width: 2, height: 2, color: .black, dx: dx, dy: dy, flipped: flipped)
+            pixel(4.5, 7.7, width: 0.55, height: 0.55, color: .white, dx: dx, dy: dy, flipped: flipped)
+            pixel(9.5, 7.7, width: 0.55, height: 0.55, color: .white, dx: dx, dy: dy, flipped: flipped)
+        }
+    }
+
+    private func drawCollapsed(dx: CGFloat, dy: CGFloat, eyes: EyeStyle, hot: Bool = false, flipped: Bool) {
+        pixel(2, 9, width: 11, height: 4, color: clawdColor, dx: dx, dy: dy, flipped: flipped)
+        pixel(0, 11, width: 2, color: clawdColor, dx: dx, dy: dy, flipped: flipped)
+        pixel(13, 11, width: 2, color: clawdColor, dx: dx, dy: dy, flipped: flipped)
+        pixel(3, 13, width: 9, color: NSColor.black.withAlphaComponent(0.45), dx: dx, dy: dy, flipped: flipped)
+        drawEyes(eyes, dx: dx, dy: dy + 2, flipped: flipped)
+        if hot { pixel(2, 9, width: 11, height: 4, color: NSColor.systemRed.withAlphaComponent(0.32), dx: dx, dy: dy, flipped: flipped) }
+    }
+
+    private func drawMini(dx: CGFloat, dy: CGFloat, eyes: EyeStyle, waving: Bool = false, flipped: Bool) {
+        pixel(4, 7, width: 7, height: 5, color: clawdColor, dx: dx, dy: dy, flipped: flipped)
+        pixel(2, waving ? 6.3 : 9, width: 2, color: clawdColor, dx: dx, dy: dy, flipped: flipped)
+        pixel(11, 9, width: 2, color: clawdColor, dx: dx, dy: dy, flipped: flipped)
+        pixel(5, 12, color: clawdColor, dx: dx, dy: dy, flipped: flipped)
+        pixel(9, 12, color: clawdColor, dx: dx, dy: dy, flipped: flipped)
+        switch eyes {
+        case .closed:
+            pixel(5, 9, width: 1.5, height: 0.5, color: .black, dx: dx, dy: dy, flipped: flipped)
+            pixel(8.5, 9, width: 1.5, height: 0.5, color: .black, dx: dx, dy: dy, flipped: flipped)
+        case .happy:
+            pixel(5, 9, color: .black, dx: dx, dy: dy, flipped: flipped)
+            pixel(9, 9, color: .black, dx: dx, dy: dy, flipped: flipped)
+            pixel(7, 10, color: .black, dx: dx, dy: dy, flipped: flipped)
+        case .wide:
+            pixel(5, 8, height: 2, color: .black, dx: dx, dy: dy, flipped: flipped)
+            pixel(9, 8, height: 2, color: .black, dx: dx, dy: dy, flipped: flipped)
+        default:
+            pixel(5, 9, color: .black, dx: dx, dy: dy, flipped: flipped)
+            pixel(9, 9, color: .black, dx: dx, dy: dy, flipped: flipped)
+        }
+    }
+
+    private func drawWizardCostume(phase: CGFloat, dx: CGFloat, dy: CGFloat) {
+        pixel(4, 5, width: 7, color: wizardColor, dx: dx, dy: dy)
+        pixel(5, 3, width: 5, height: 2, color: wizardColor, dx: dx, dy: dy)
+        pixel(6, 1, width: 3, height: 2, color: wizardColor, dx: dx, dy: dy)
+        pixel(8, 0, width: 2, color: wizardColor, dx: dx, dy: dy)
+        pixel(13, 5, width: 0.8, height: 9, color: NSColor(calibratedRed: 0.46, green: 0.28, blue: 0.12, alpha: 1), dx: dx, dy: dy)
+        pixel(12.4, 4.2, width: 2, height: 2, color: goldColor, dx: dx, dy: dy - abs(sin(phase * .pi * 2)))
+    }
+
+    private func drawJugglingBalls(phase: CGFloat, dx: CGFloat, dy: CGFloat) {
+        let colors: [NSColor] = [.systemRed, goldColor, cyanColor]
+        for index in 0 ..< 3 {
+            let p = phase + CGFloat(index) / 3
+            let x = 3 + CGFloat(index) * 4 + sin(p * .pi * 2) * 1.2
+            let y = 3.8 - abs(sin(p * .pi * 2)) * 2.8
+            pixel(x, y, width: 1.5, height: 1.5, color: colors[index], dx: dx, dy: dy)
+        }
+    }
+
+    private func drawTypingParticles(phase: CGFloat, dx: CGFloat, dy: CGFloat) {
+        for index in 0 ..< 4 {
+            let p = CGFloat(index) / 4
+            let y = 13 - fmod(phase + p, 1) * 7
+            pixel(2 + CGFloat(index) * 3.3, y, width: 0.7, height: 0.7, color: cyanColor.withAlphaComponent(0.8), dx: dx, dy: dy)
+        }
+    }
+
+    private func drawThinkingDots(phase: CGFloat, dx: CGFloat, dy: CGFloat) {
+        for index in 0 ..< 3 {
+            let alpha = 0.3 + 0.7 * max(0, sin((phase + CGFloat(index) * 0.2) * .pi * 2))
+            pixel(10 + CGFloat(index) * 1.5, 3.5 - CGFloat(index) * 0.7, width: 0.9, height: 0.9, color: cyanColor.withAlphaComponent(alpha), dx: dx, dy: dy)
+        }
+    }
+
+    private func drawRainbowCrown(phase: CGFloat, dx: CGFloat, dy: CGFloat) {
+        let colors: [NSColor] = [.systemRed, .systemOrange, .systemYellow, .systemGreen, .systemBlue, .systemPurple]
+        for (index, color) in colors.enumerated() {
+            let y = 4 - abs(CGFloat(index) - 2.5) * 0.45
+            pixel(4 + CGFloat(index) * 1.2, y, width: 1.2, height: 0.8, color: color, dx: dx, dy: dy - abs(sin(phase * .pi * 2)) * 0.5)
+        }
+    }
+
+    private func drawSparks(phase: CGFloat, dx: CGFloat, dy: CGFloat) {
+        let offset = abs(sin(phase * .pi * 2))
+        pixel(1, 4 - offset, color: goldColor, dx: dx, dy: dy)
+        pixel(13, 3 + offset, color: cyanColor, dx: dx, dy: dy)
+        pixel(2, 2 + offset, width: 0.7, height: 0.7, color: .white, dx: dx, dy: dy)
+    }
+
+    private func drawSparkles(phase: CGFloat, dx: CGFloat, dy: CGFloat) {
+        let blink = phase < 0.5 ? goldColor : NSColor.white
+        pixel(1, 5, color: blink, dx: dx, dy: dy)
+        pixel(13, 4, color: blink, dx: dx, dy: dy)
+        pixel(12, 11, width: 0.7, height: 0.7, color: goldColor, dx: dx, dy: dy)
+    }
+
+    private func drawSteam(phase: CGFloat, dx: CGFloat, dy: CGFloat) {
+        let rise = fmod(phase * 2, 1) * 3
+        pixel(4, 7 - rise, width: 0.8, height: 2, color: NSColor.white.withAlphaComponent(0.7), dx: dx, dy: dy)
+        pixel(9, 6 - fmod(phase + 0.5, 1) * 3, width: 0.8, height: 2, color: NSColor.white.withAlphaComponent(0.7), dx: dx, dy: dy)
+    }
+
+    private func drawSmoke(phase: CGFloat, dx: CGFloat, dy: CGFloat) {
+        let rise = fmod(phase * 1.5, 1) * 3
+        pixel(5, 8 - rise, width: 1.2, height: 1.2, color: NSColor.gray.withAlphaComponent(0.7), dx: dx, dy: dy)
+        pixel(9, 7 - fmod(phase + 0.4, 1) * 3, width: 1.1, height: 1.1, color: NSColor.gray.withAlphaComponent(0.55), dx: dx, dy: dy)
+    }
+
+    private func drawQuestion(dx: CGFloat, dy: CGFloat) {
+        pixel(1, 3, width: 2, color: cyanColor, dx: dx, dy: dy)
+        pixel(0, 4, color: cyanColor, dx: dx, dy: dy)
+        pixel(3, 4, height: 2, color: cyanColor, dx: dx, dy: dy)
+        pixel(2, 6, color: cyanColor, dx: dx, dy: dy)
+        pixel(1, 8, color: cyanColor, dx: dx, dy: dy)
+    }
+
+    private func drawExclamation(dx: CGFloat, dy: CGFloat, color: NSColor) {
+        pixel(13, 3, height: 4, color: color, dx: dx, dy: dy)
+        pixel(13, 8, color: color, dx: dx, dy: dy)
+    }
+
+    private func drawZ(dx: CGFloat, dy: CGFloat) {
+        pixel(11, 3, width: 3, height: 0.7, color: NSColor.white.withAlphaComponent(0.85), dx: dx, dy: dy)
+        pixel(13, 3.7, width: 0.7, height: 0.7, color: NSColor.white.withAlphaComponent(0.85), dx: dx, dy: dy)
+        pixel(12, 4.4, width: 0.7, height: 0.7, color: NSColor.white.withAlphaComponent(0.85), dx: dx, dy: dy)
+        pixel(11, 5.1, width: 3, height: 0.7, color: NSColor.white.withAlphaComponent(0.85), dx: dx, dy: dy)
+    }
+
+    private func pixel(
+        _ x: CGFloat, _ y: CGFloat, width: CGFloat = 1, height: CGFloat = 1,
+        color: NSColor, dx: CGFloat = 0, dy: CGFloat = 0, flipped: Bool = false
+    ) {
+        let scale = min(bounds.width / 15, bounds.height / 16)
+        let originX = (bounds.width - 15 * scale) / 2
+        let originY = (bounds.height - 16 * scale) / 2
+        let pixelX = flipped ? 15 - x - width : x
+        color.setFill()
+        NSRect(
+            x: originX + (pixelX + dx) * scale,
+            y: originY + (y + dy) * scale,
+            width: max(0.5, width * scale),
+            height: max(0.5, height * scale)
+        ).fill()
     }
 
     deinit {

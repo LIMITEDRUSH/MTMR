@@ -119,8 +119,10 @@ The preset includes SF Symbol buttons and key combinations, an animated and
 interactive Clawd usage widget, and a color-coded Codex allowance meter. The
 usage widget mirrors TokenTracker's top companion: tapping its speech bubble
 cycles through today, 7-day and 30-day totals, active days, conversations,
-quota status, and personality messages while Clawd cycles through eleven
-reactions. It prefers TokenTracker's read-only localhost API when TokenTracker
+quota status, and personality messages while Clawd cycles through all 20
+official TokenTracker states and five physical tap reactions. This includes
+the wizard outfit and staff, juggling, typing, ultrathink, overheating,
+sleep/wake, and mini variants. It prefers TokenTracker's read-only localhost API when TokenTracker
 is running, then falls back to local `~/.codex/sessions` logs. The allowance
 widget performs the required two-stage handshake with the locally authenticated
 `codex app-server` every 10 seconds. If live quota data is unavailable it shows
